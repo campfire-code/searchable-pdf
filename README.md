@@ -12,7 +12,7 @@
   - Mac：`brew install tesseract`
   - Windows：`winget install UB-Mannheim.TesseractOCR`，或到 https://github.com/UB-Mannheim/tesseract/wiki 下载安装包，按默认路径安装即可。
 - **Ghostscript 可选**：上游 v17 起不再强制需要 Ghostscript（用 pypdfium2 渲染页面，并自行生成 PDF/A）。Ghostscript 是 AGPL 协议，所以本工具不要求安装。需要它时（例如个别文件转 PDF/A 失败）：Mac `brew install ghostscript`，Windows 到 https://ghostscript.com/releases/gsdnld.html 下载安装。
-- **中文识别数据**：第一次启动脚本会自动下载 Tesseract 的 `eng`、`osd`、`chi_sim`（简体中文）、`chi_tra`（繁体中文）语言数据（来自 tesseract-ocr/tessdata_fast，约 17 MB）到解压出来的 `tessdata` 文件夹，不改动你系统里的 Tesseract。
+- **中文识别数据**：第一次启动脚本会自动下载 Tesseract 的 `eng`、`osd`、`chi_sim`（简体中文）、`chi_tra`（繁体中文）语言数据（来自 tesseract-ocr/tessdata_fast，约 20 MB）到解压出来的 `tessdata` 文件夹，不改动你系统里的 Tesseract。
 - 网页界面是英文（上游原样）。语言下拉框里选 `chi_sim+eng`（简体中文 + 英文，默认）、`eng`、`chi_tra+eng`、`chi_sim`。
 - 需要联网：首次启动会下载 uv、Python 3.12、依赖和语言数据。
 
