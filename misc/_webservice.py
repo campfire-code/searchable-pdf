@@ -18,7 +18,7 @@ import sys
 from functools import partial
 from operator import getitem
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import TemporaryDirectory
 
 import pikepdf
 import streamlit as st
@@ -50,7 +50,10 @@ with st.expander("Input options"):
     invalidate_digital_signatures = st.checkbox(
         "Invalidate digital signatures", value=False
     )
-    language = st.selectbox("Language", options=["eng", "deu", "fra", "spa"])
+    # 篝火版：语言选项改为启动脚本下载好的 chi_sim / chi_tra / eng
+    language = st.selectbox(
+        "Language", options=["chi_sim+eng", "eng", "chi_tra+eng", "chi_sim"]
+    )
 
     image_dpi = st.slider(
         "Image DPI", value=300, key="image_dpi", min_value=1, max_value=5000, step=50
@@ -194,22 +197,18 @@ if uploaded:
         args.append(f"--jbig2-threshold={jbig2_threshold}")
     if jobs:
         args.append(f"--jobs={jobs}")
-    with NamedTemporaryFile(delete=True, suffix=f"_{uploaded.name}") as input_file:
-        input_file.write(uploaded.getvalue())
-        input_file.flush()
-        input_file.seek(0)
-        args.append(str(input_file.name))
-        with NamedTemporaryFile(delete=True, suffix=".pdf") as output_file:
-            args.append(str(output_file.name))
+    # 篝火版：Windows 上不能让子进程打开仍被占用的 NamedTemporaryFile，改用临时目录
+    with TemporaryDirectory() as tmpdir:
+        input_file = Path(tmpdir) / f"input_{Path(uploaded.name).name}"
+        input_file.write_bytes(uploaded.getvalue())
+        args.append(str(input_file))
+        if True:
+            output_file = Path(tmpdir) / "output.pdf"
+            args.append(str(output_file))
 
-            st.session_state['running'] = (
-                'run_button' in st.session_state and st.session_state.run_button
-            )
-            if st.button(
-                "Run OCRmyPDF",
-                disabled=st.session_state.get("running", False),
-                key='run_button',
-            ):
+            # 篝火版：去掉上游的 disabled 逻辑。新版 streamlit 下点击的同一轮里按钮
+            # 已被禁用，点击不会触发任何处理。
+            if st.button("Run OCRmyPDF", key='run_button'):
                 st.session_state['running'] = True
                 args = [sys.executable, '-u', '-m', "ocrmypdf"] + args
 
@@ -220,20 +219,24 @@ if uploaded:
                     while proc.poll() is None:
                         line = proc.stderr.readline()
                         if line:
-                            st.html("<code>" + line.decode().strip() + "</code>")
+                            st.html(
+                                "<code>"
+                                + line.decode("utf-8", errors="replace").strip()
+                                + "</code>"
+                            )
 
                 if proc.returncode != 0:
                     st.error(f"ocrmypdf failed with exit code {proc.returncode}")
                     st.session_state['running'] = False
                     st.stop()
 
-                if Path(output_file.name).stat().st_size == 0:
+                if not output_file.exists() or output_file.stat().st_size == 0:
                     st.error("No output PDF file was generated")
                     st.stop()
 
                 st.download_button(
                     label="Download output PDF",
-                    data=output_file.read(),
+                    data=output_file.read_bytes(),
                     file_name=uploaded.name,
                     mime="application/pdf",
                 )

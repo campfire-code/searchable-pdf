@@ -1,3 +1,74 @@
+# 扫描 PDF 可搜索化（OCRmyPDF）
+
+> 篝火出品 · 基于开源项目 [ocrmypdf/OCRmyPDF](https://github.com/ocrmypdf/OCRmyPDF)（MPL-2.0）
+
+给扫描件（没有文字层、只有图片的 PDF）加上一层看不见的文字，之后就能搜索、复制文字。识别在本机完成，文件不上传。启动后在浏览器里打开上游自带的本机网页界面，上传 PDF，点一下按钮，下载处理好的 PDF。
+
+![界面截图](docs/screenshot.png)
+
+## 使用前必读
+
+- **必须先装 Tesseract**（识别引擎，Apache-2.0，不随本工具打包）：
+  - Mac：`brew install tesseract`
+  - Windows：`winget install UB-Mannheim.TesseractOCR`，或到 https://github.com/UB-Mannheim/tesseract/wiki 下载安装包，按默认路径安装即可。
+- **Ghostscript 可选**：上游 v17 起不再强制需要 Ghostscript（用 pypdfium2 渲染页面，并自行生成 PDF/A）。Ghostscript 是 AGPL 协议，所以本工具不要求安装。需要它时（例如个别文件转 PDF/A 失败）：Mac `brew install ghostscript`，Windows 到 https://ghostscript.com/releases/gsdnld.html 下载安装。
+- **中文识别数据**：第一次启动脚本会自动下载 Tesseract 的 `eng`、`osd`、`chi_sim`（简体中文）、`chi_tra`（繁体中文）语言数据（来自 tesseract-ocr/tessdata_fast，约 17 MB）到解压出来的 `tessdata` 文件夹，不改动你系统里的 Tesseract。
+- 网页界面是英文（上游原样）。语言下拉框里选 `chi_sim+eng`（简体中文 + 英文，默认）、`eng`、`chi_tra+eng`、`chi_sim`。
+- 需要联网：首次启动会下载 uv、Python 3.12、依赖和语言数据。
+
+## 下载与运行
+
+到 [Releases](https://github.com/campfire-code/searchable-pdf/releases/latest) 下载 `searchable-pdf_版本号_portable.zip`，解压后：
+
+- **Windows**：双击 `启动（Windows 双击）.bat`
+- **Mac**：双击 `启动（Mac 双击）.command`（第一次可能要在「系统设置 → 隐私与安全性」里允许打开）
+
+第一次运行安装几分钟；之后启动很快，并自动打开浏览器 http://127.0.0.1:8501 。关闭启动窗口即退出。
+
+## 怎么用
+
+1. 把扫描 PDF 拖到「Upload input PDF or image」。
+2. 展开 `Input options`，确认 `Language`（中英混排保持默认 `chi_sim+eng`）。
+3. 点 `Run OCRmyPDF`，等进度日志跑完，点 `Download output PDF`。
+4. 已经有文字层的页面会报错停止；要跳过它们选 Mode 里的 `skip-text`，要强制重新识别选 `force-ocr`。其余选项（纠偏、转正、清理、PDF/A、压缩）含义见上游文档。
+5. 想批量处理一个文件夹，可用命令行 `ocrmypdf`，或上游 `misc/batch.py`、`misc/watcher.py`（需要自己配好环境，篝火没有验证）。
+
+## 验收用例
+
+用图片生成一份没有文字层的 PDF，内容写「示例：扫描件可搜索化测试」「这是一份没有文字层的合同样本，付款期限为三十日。」和两行英文：
+
+| 操作 | 应得到 |
+|---|---|
+| 处理前 `pdftotext scan.pdf -` | 几乎没有文字 |
+| 网页里选 `chi_sim+eng` 处理，下载结果后 `pdftotext out.pdf -` | 能提取出上述中英文句子；用 PDF 阅读器搜「示例」「Invoice」能命中 |
+
+篝火本机实测（Mac，Tesseract 5 + tessdata_fast 的 chi_sim）：中英文都识别正确；中文逗号被识别成半角逗号加空格（「样本 , 付款」），属于 tessdata_fast 的小瑕疵，换 `tessdata_best` 的 chi_sim 数据通常更准（自行替换 `tessdata` 文件夹里的 `chi_sim.traineddata`）。只测了清晰的印刷体样例，手写、模糊、复杂版面的效果请自己用实际文件试。
+
+> 提示：系统里没有 CJK 字体时，上游会把中文文字层做成不可见层（仍可搜索复制，只是在阅读器里高亮时看不到字形），属于正常现象。
+
+## 可选：换成 RapidOCR 引擎
+
+上游支持第三方 OCR 插件。社区插件 [ocrmypdf-rapidocr](https://pypi.org/project/ocrmypdf-rapidocr/)（MIT，基于 Apache-2.0 的 RapidOCR）篝火本机试过：在启动脚本建好的环境里执行 `uv pip install ocrmypdf-rapidocr`，命令行加 `--plugin ocrmypdf_rapidocr -l chi_sim`，同一份样例中英文都识别正确。注意：该插件只允许一种语言；个人维护、很新（2026-06 发布，仓库 0 星），首次运行要下载识别模型；网页界面没有这个选项，需用命令行。默认不安装。
+
+## 和上游的区别
+
+- 新增中文说明、`tool.json`、`.github/workflows/release.yml`、`campfire/` 启动脚本，以及两个辅助脚本 `campfire_setup.py`（检查 Tesseract、下载语言数据）和 `campfire_run.py`（设置语言数据路径并启动网页界面）。移除了上游的工作流。
+- 安装的是 PyPI 上的上游 v17.13.0 发布包（`ocrmypdf==17.13.0`），不是源码目录。
+- 改了上游网页界面 `misc/_webservice.py`（该文件按上游声明是 AGPL-3.0-or-later，改动同样以该协议开放），共 4 处：
+  1. 语言下拉框由 `eng/deu/fra/spa` 改为 `chi_sim+eng / eng / chi_tra+eng / chi_sim`；
+  2. 去掉「点击时按钮已被禁用」的逻辑（新版 streamlit 下点了按钮没有任何反应）；
+  3. 输入输出文件改用临时目录（Windows 上不能让子进程打开仍被占用的临时文件）；
+  4. 日志按 UTF-8 解码。
+- 上游自己的网页界面只是示例性质的小服务，没有鉴权，只监听本机 127.0.0.1，请不要对外开放。
+
+## 归属与许可证
+
+本仓库由**篝火**整理发布。OCRmyPDF 的版权归 James R. Barlow 等原作者所有，核心按 **MPL-2.0** 分发，仓库内各文件的许可证见 `LICENSES/` 目录和 `REUSE.toml`（文档为 CC-BY-SA-4.0，`misc/webservice.py` 与 `misc/_webservice.py` 为 AGPL-3.0-or-later）。依赖：Tesseract（Apache-2.0，需自行安装）、Ghostscript（AGPL-3.0，可选，需自行安装）、streamlit（Apache-2.0）。语言数据来自 tesseract-ocr/tessdata_fast（Apache-2.0）。全部工具目录见 [toolkit-hub](https://github.com/campfire-code/toolkit-hub)。
+
+---
+
+以下为上游原始说明：
+
 <!-- SPDX-FileCopyrightText: 2014 Julien Pfefferkorn -->
 <!-- SPDX-FileCopyrightText: 2015 James R. Barlow -->
 <!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
