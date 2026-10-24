@@ -19,6 +19,7 @@ sys.exit(
             "--server.address", "127.0.0.1",
             "--server.headless", "true",
             "--browser.gatherUsageStats", "false",
+            "--client.toolbarMode", "minimal",
         ]
     )
 )

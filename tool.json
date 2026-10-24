@@ -2,7 +2,7 @@
   "id": "o06",
   "slug": "searchable-pdf",
   "name": "扫描 PDF 可搜索化",
-  "version": "17.13.0-campfire.1",
+  "version": "17.13.0-campfire.2",
   "repo": "campfire-code/searchable-pdf",
   "license": "MPL-2.0",
   "delivery": "launcher",

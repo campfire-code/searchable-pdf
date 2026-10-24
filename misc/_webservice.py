@@ -15,8 +15,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from functools import partial
-from operator import getitem
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -36,109 +34,190 @@ def get_host_url_with_port(port: int) -> str:
     return f"//{host}:{port}"  # Use the same protocol
 
 
-st.title("OCRmyPDF Web Service")
+# 篝火版：界面文字全部汉化。选项的取值（传给 ocrmypdf 的参数）保持原样，只把显示文字换成中文。
+MODE_LABELS = {
+    "normal": "常规（页面已有文字时会报错）",
+    "skip-text": "跳过已有文字的页面",
+    "force-ocr": "强制识别（已有文字也重新识别）",
+    "redo-ocr": "重新识别（替换旧的文字层）",
+}
+LANGUAGE_LABELS = {
+    "chi_sim+eng": "简体中文 + 英文",
+    "eng": "英文",
+    "chi_tra+eng": "繁体中文 + 英文",
+    "chi_sim": "仅简体中文",
+}
+OUTPUT_TYPE_LABELS = {
+    "pdfa": "PDF/A（归档格式，默认）",
+    "pdf": "普通 PDF",
+    "pdfa-1": "PDF/A-1",
+    "pdfa-2": "PDF/A-2",
+    "pdfa-3": "PDF/A-3",
+    "none": "不生成文件",
+}
+RENDERER_LABELS = {
+    "auto": "自动选择",
+    "hocr": "逐词定位渲染",
+    "hocrdebug": "逐词定位渲染（显示文字框，调试用）",
+    "sandwich": "三明治渲染（图像加不可见文字层）",
+}
+OPTIMIZE_LABELS = {
+    "0": "0（不优化）",
+    "1": "1（无损优化）",
+    "2": "2（有损优化，受下方质量设置影响）",
+    "3": "3（最大程度压缩）",
+}
+COMPRESSION_LABELS = {"auto": "自动", "jpeg": "JPEG", "lossless": "无损"}
+VERBOSE_LABELS = {-1: "安静", 0: "默认", 1: "调试", 2: "详细调试"}
 
-uploaded = st.file_uploader("Upload input PDF or image", type=["pdf"], key="file")
-
-mode = st.selectbox("Mode", options=["normal", "skip-text", "force-ocr", "redo-ocr"])
-
-pages = st.text_input(
-    "Pages", value="", help="Comma-separated list of pages to process"
+st.title("扫描 PDF 可搜索化")
+st.caption(
+    "上传扫描版 PDF，识别文字后得到可以搜索、复制的 PDF。文件只在本机处理，不会上传到任何服务器。"
 )
 
-with st.expander("Input options"):
-    invalidate_digital_signatures = st.checkbox(
-        "Invalidate digital signatures", value=False
+uploaded = st.file_uploader("上传要识别的 PDF", type=["pdf"], key="file")
+
+# 篝火版：Streamlit 上传框自带的英文提示（按钮、拖放说明）没有中文开关，用样式把它们替换成中文。
+# 只在还没选文件时注入：选好文件后上传框里只剩图标按钮，样式会把它们弄乱。
+if uploaded is None:
+    st.markdown(
+        """
+<style>
+[data-testid="stFileUploaderDropzone"] button [data-testid="stMarkdownContainer"] p { font-size: 0 !important; }
+[data-testid="stFileUploaderDropzone"] button [data-testid="stMarkdownContainer"] p::after {
+    content: "选择文件"; font-size: 1rem;
+}
+[data-testid="stFileUploaderDropzoneInstructions"] span { font-size: 0 !important; }
+[data-testid="stFileUploaderDropzoneInstructions"] span::after {
+    content: "把 PDF 文件拖到这里，每个文件不超过 200 MB"; font-size: 0.875rem;
+}
+[data-testid="stFileUploaderDropzoneInstructions"] small { display: none; }
+</style>
+""",
+        unsafe_allow_html=True,
     )
+
+mode = st.selectbox(
+    "识别模式",
+    options=["normal", "skip-text", "force-ocr", "redo-ocr"],
+    format_func=MODE_LABELS.get,
+)
+
+pages = st.text_input(
+    "页码范围", value="", help="只处理指定的页，页码用英文逗号分隔，例如 1,3,5-8；留空表示全部页"
+)
+
+with st.expander("输入选项"):
+    invalidate_digital_signatures = st.checkbox("使数字签名失效", value=False)
     # 篝火版：语言选项改为启动脚本下载好的 chi_sim / chi_tra / eng
     language = st.selectbox(
-        "Language", options=["chi_sim+eng", "eng", "chi_tra+eng", "chi_sim"]
+        "识别语言",
+        options=["chi_sim+eng", "eng", "chi_tra+eng", "chi_sim"],
+        format_func=LANGUAGE_LABELS.get,
     )
 
     image_dpi = st.slider(
-        "Image DPI", value=300, key="image_dpi", min_value=1, max_value=5000, step=50
+        "图片分辨率（DPI）",
+        value=300,
+        key="image_dpi",
+        min_value=1,
+        max_value=5000,
+        step=50,
     )
-with st.expander("Preprocessing"):
-    skip_big = st.checkbox("Skip OCR on big pages", value=False, key="skip_big")
-    oversample = st.slider("Oversample", min_value=0, max_value=5000, value=0, step=50)
-    rotate_pages = st.checkbox("Rotate pages", value=False, key="rotate")
-    deskew = st.checkbox("Deskew pages", value=False, key="deskew")
-    clean = st.checkbox("Clean pages before OCR", value=False, key="clean")
-    clean_final = st.checkbox("Clean final", value=False, key="clean_final")
-    remove_vectors = st.checkbox("Remove vectors", value=False, key="remove_vectors")
+with st.expander("预处理"):
+    skip_big = st.checkbox("跳过过大的页面", value=False, key="skip_big")
+    oversample = st.slider(
+        "最低分辨率（DPI，低于此值会放大）", min_value=0, max_value=5000, value=0, step=50
+    )
+    rotate_pages = st.checkbox("自动旋转页面", value=False, key="rotate")
+    deskew = st.checkbox("自动纠正倾斜", value=False, key="deskew")
+    clean = st.checkbox("识别前清理页面", value=False, key="clean")
+    clean_final = st.checkbox("把清理结果写入最终文件", value=False, key="clean_final")
+    remove_vectors = st.checkbox("去除矢量图形", value=False, key="remove_vectors")
 
 
-with st.expander("Output options"):
+with st.expander("输出选项"):
     output_type = st.selectbox(
-        "Output type", options=["pdfa", "pdf", "pdfa-1", "pdfa-2", "pdfa-3", "none"]
+        "输出格式",
+        options=["pdfa", "pdf", "pdfa-1", "pdfa-2", "pdfa-3", "none"],
+        format_func=OUTPUT_TYPE_LABELS.get,
     )
 
     pdf_renderer = st.selectbox(
-        "PDF renderer", options=["auto", "hocr", "hocrdebug", "sandwich"]
+        "文字层渲染方式",
+        options=["auto", "hocr", "hocrdebug", "sandwich"],
+        format_func=RENDERER_LABELS.get,
     )
 
-    optimize = st.selectbox("Optimize", options=["0", "1", "2", "3"])
+    optimize = st.selectbox(
+        "文件体积优化", options=["0", "1", "2", "3"], format_func=OPTIMIZE_LABELS.get
+    )
 
-    st.selectbox("PDF/A compression", options=["auto", "jpeg", "lossless"])
+    st.selectbox(
+        "PDF/A 压缩方式",
+        options=["auto", "jpeg", "lossless"],
+        format_func=COMPRESSION_LABELS.get,
+    )
 
-with st.expander("Metadata"):
+with st.expander("文档信息"):
     title = author = keywords = subject = None
     if uploaded:
         with pikepdf.open(uploaded) as pdf, pdf.open_metadata() as meta:
             st.code(str(meta), language="xml")
-            title = st.text_input("Title", value=meta.get('dc:title', ''))
-            author = st.text_input("Author", value=meta.get('dc:creator', ''))
-            keywords = st.text_input("Keywords", value=meta.get('dc:subject', ''))
-            subject = st.text_input("Subject", value=meta.get('dc:description', ''))
+            title = st.text_input("标题", value=meta.get('dc:title', ''))
+            author = st.text_input("作者", value=meta.get('dc:creator', ''))
+            keywords = st.text_input("关键词", value=meta.get('dc:subject', ''))
+            subject = st.text_input("主题", value=meta.get('dc:description', ''))
+    else:
+        st.caption("上传 PDF 后，这里会显示并允许修改文档信息。")
 
 
-with st.expander("Optimization after OCR"):
+with st.expander("识别后的压缩"):
     jpeg_quality = st.slider(
-        "JPEG quality", min_value=0, max_value=100, value=75, key="jpeg_quality"
+        "JPEG 质量", min_value=0, max_value=100, value=75, key="jpeg_quality"
     )
     png_quality = st.slider(
-        "PNG quality", min_value=0, max_value=100, value=75, key="png_quality"
+        "PNG 质量", min_value=0, max_value=100, value=75, key="png_quality"
     )
     jbig2_threshold = st.number_input(
-        "JBIG2 threshold", value=0.85, key="jbig2_threshold"
+        "黑白图压缩阈值", value=0.85, key="jbig2_threshold"
     )
 
-with st.expander("Advanced options"):
+with st.expander("高级选项"):
     jobs = st.slider(
-        "Threads",
+        "并行线程数",
         min_value=1,
         max_value=os.cpu_count(),
         value=os.cpu_count(),
         key="threads",
     )
     max_image_mpixels = st.number_input(
-        "Max image size",
+        "图片大小上限（百万像素）",
         value=250.0,
         min_value=0.0,
-        help="Maximum image size in megapixels",
+        help="超过这个大小的图片会被拒绝处理，单位是百万像素",
     )
     rotate_pages_threshold = st.number_input(
-        "Rotate pages threshold",
+        "自动旋转的置信度阈值",
         value=DEFAULT_ROTATE_PAGES_THRESHOLD,
         min_value=0.0,
         max_value=1000.0,
-        help="Threshold for automatic page rotation",
+        help="识别出的页面方向置信度达到这个值才会自动旋转",
     )
     fast_web_view = st.number_input(
-        "Fast web view",
+        "网页快速浏览阈值（MB）",
         value=1.0,
         min_value=0.0,
-        help="Linearize files above this size in MB",
+        help="大于这个体积的文件会做线性化处理，方便边下载边浏览，单位是 MB",
     )
     continue_on_soft_render_error = st.checkbox(
-        "Continue on soft render error", value=True
+        "页面渲染出现轻微错误时继续处理", value=True
     )
-    verbose_labels = ["quiet", "default", "debug", "debug_all"]
     verbose = st.selectbox(
-        "Verbosity level",
+        "日志详细程度",
         options=[-1, 0, 1, 2],
         index=1,
-        format_func=partial(getitem, verbose_labels),
+        format_func=VERBOSE_LABELS.get,
     )
 
 if uploaded:
@@ -208,7 +287,7 @@ if uploaded:
 
             # 篝火版：去掉上游的 disabled 逻辑。新版 streamlit 下点击的同一轮里按钮
             # 已被禁用，点击不会触发任何处理。
-            if st.button("Run OCRmyPDF", key='run_button'):
+            if st.button("开始识别", key='run_button'):
                 st.session_state['running'] = True
                 args = [sys.executable, '-u', '-m', "ocrmypdf"] + args
 
@@ -226,16 +305,16 @@ if uploaded:
                             )
 
                 if proc.returncode != 0:
-                    st.error(f"ocrmypdf failed with exit code {proc.returncode}")
+                    st.error(f"识别失败，退出码 {proc.returncode}。请查看上方的日志。")
                     st.session_state['running'] = False
                     st.stop()
 
                 if not output_file.exists() or output_file.stat().st_size == 0:
-                    st.error("No output PDF file was generated")
+                    st.error("没有生成输出文件，请查看上方的日志。")
                     st.stop()
 
                 st.download_button(
-                    label="Download output PDF",
+                    label="下载识别后的 PDF",
                     data=output_file.read_bytes(),
                     file_name=uploaded.name,
                     mime="application/pdf",
